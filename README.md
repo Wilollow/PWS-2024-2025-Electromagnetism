@@ -16,9 +16,9 @@ This repository contains the code to various models that describe and visualise 
 
 This project makes use of multiple community-driven projects to function properly. Thanks to everyone that has shown their support by contributing.
 
--   [Unity Engine] - HTML enhanced for web apps!
--   [python] - awesome web-based text editor
--   [Manim CE] - Markdown parser done right. Fast and easy to extend.
+-   [Unity Engine] - Realtime development platform
+-   [python] - Python is a programming language that lets you work quickly and integrate systems more effectively
+-   [Manim CE] - A community maintained Python library for creating mathematical animations
 
 ## Installation
 
@@ -29,17 +29,22 @@ This project requires various dependenies to be installed prior to cloning the r
 
 -   [python 3.8 or above]
 -   [ffmpeg](https://ffmpeg.org/download.html#build-windows>)
+-   (optional)[git](https://git-scm.com/downloads)
+
+**manual installation**
 
 Clone the repository and run start.bat to begin installation.
 
 ```sh
 mkdir pws
 cd pws
-git clone https://github.com/Wilollow/PWS-2024-2025-Aidan
+git clone https://github.com/Wilollow/PWS-2024-2025-Aidan-Norde-Electromagnetisme.git
 cd PWS-2024-2025-Aidan-Norde-Electromagnetisme
 activate.bat
 
 ```
+
+Alternatively, you could donwload the code in a .zip file and extract it into a different folder. Then, doulbe click activate.bat to begin installation.
 
 ## License
 

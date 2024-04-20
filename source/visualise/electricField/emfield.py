@@ -1,13 +1,4 @@
-# import time
-# import manim
-
-# print("hello... its me, python")
-
-# while True:
-#     time.sleep(1)
-#     print("hello... its me, python")
-
-from manim import *
+from manim import Circle,Square,Transform,Create,FadeOut
 
 
 class SquareToCircle(Scene):
