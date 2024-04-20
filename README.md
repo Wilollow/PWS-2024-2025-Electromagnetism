@@ -2,7 +2,9 @@
 
 ### _Official repository for visualisations and models describing the various behaviours of electromagnetic fields._
 
-[![Build Status](https://travis-ci.org/joemccann/dillinger.svg?branch=master)](https://travis-ci.org/joemccann/dillinger)
+🔴IMPORTANT❗ This project is still very much in early development and currently does not contain any usefull code.
+
+<!-- [![Build Status](https://travis-ci.org/joemccann/dillinger.svg?branch=master)](https://travis-ci.org/joemccann/dillinger) -->
 
 This repository contains the code to various models that describe and visualise the behaviour of the electromagnetic field at atomic scale. These models describe actions such as:
 
