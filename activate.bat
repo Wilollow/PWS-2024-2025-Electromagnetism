@@ -42,7 +42,7 @@ call %VENVACTIVATE%
 goto :run-program
 
 :run-program
-call manim -p -qh %RUNSCRIPT% SquareToCircle
+call manim -p -qh %RUNSCRIPT% WaveMachineDemo
 
 :show_stdout_stderr
 echo womp womp
