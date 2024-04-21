@@ -38,13 +38,13 @@ Clone the repository and run start.bat to begin installation.
 ```sh
 mkdir pws
 cd pws
-git clone https://github.com/Wilollow/PWS-2024-2025-Aidan-Norde-Electromagnetisme.git
-cd PWS-2024-2025-Aidan-Norde-Electromagnetisme
+git clone https://github.com/Wilollow/PWS-2024-2025-Electromagnetism.git
+cd PWS-2024-2025-Electromagnetism
 activate.bat
 
 ```
 
-Alternatively, you could donwload the code in a .zip file and extract it into a different folder. Then, doulbe click activate.bat to begin installation.
+Alternatively, you could donwload the code in a .zip file and extract it into a different folder. Then, double click activate.bat to initialise the project.
 
 ## License
 

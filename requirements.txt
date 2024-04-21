@@ -1,1 +1,2 @@
-manim
+manimgl
+numpy==1.24
