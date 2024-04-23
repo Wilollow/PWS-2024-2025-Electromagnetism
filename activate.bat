@@ -43,7 +43,7 @@ goto :run-program
 
 :run-program
 call cd source\visualise
-call manimgl -w electricField/emfield.py InteractiveDevelopment
+call manimgl electricField/emfield.py InteractiveDevelopment
 @REM call manimgl -wo render_scene.py RenderScene
 if %ERRORLEVEL% == 0 goto :end_program_succesful
 goto :show_stdout_stderr
