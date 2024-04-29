@@ -1,0 +1,301 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+struct shapeInfo{
+    float3 position;
+    float3 scale;
+    float3 color;
+    int numChildren;
+    int shapeType;
+    int behaviour;
+    int nextSiblingIndex;
+};
+
+Texture2D<float4> Source;
+RWTexture2D<float4> Destination;
+StructuredBuffer<shapeInfo> shapes;
+
+float4x4 _CameraInverseProjection, _CameraToWorld;
+float3 camPos, lightPos;
+float3 lightCol;
+float surfaceDisReq;
+float maxDistance;
+float minBrightness, Maxbrightness;
+float shadowBrightnessMul, brightness;
+int cameraWidth, cameraHeight;
+int maxSteps;
+int numShapes;
+
+
+float sdSphere(float3 p, float3 pos, float s)
+{
+    return distance(p,pos)-s;
+}
+
+float sdBox(float3 p, float3 pos, float3 b)
+{
+    float3 q = abs(p - pos) - b;
+    return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0);
+}
+
+float4 choosePoint(float orDistance, float newDistance, float3 orColour, float3 newColour, int behaviour){
+    float4 pointInfo = float4(orColour, orDistance);
+    if(behaviour == 0 && newDistance < orDistance){
+        pointInfo.w = newDistance;
+        pointInfo.xyz = newColour;
+    }
+    if(behaviour == 1 && -newDistance > orDistance){
+        pointInfo.w = -newDistance;
+        pointInfo.xyz = newColour;
+    }
+    if(behaviour == 2 && newDistance < orDistance){
+        pointInfo.w = newDistance;
+        pointInfo.xyz = newColour;
+    }
+    if(behaviour == 3 && newDistance > orDistance){
+        pointInfo.w = newDistance;
+        pointInfo.xyz = newColour;
+    }
+    return pointInfo;
+}
+
+// float approachSceneCol(float3 origin){
+//     float4 pointInfo;
+//     pointInfo.w = maxDistance;
+//     for(int i = 0; i<numShapes; i++){
+//         shapeInfo shape = shapes[i];
+//         if(shape.shapeType == 0){
+//             pointInfo = choosePoint(pointInfo.w,sdBox(origin, shape.position, shape.scale), pointInfo.xyz, shape.color);
+//             progression = min(progression, sdBox(origin, shape.position, shape.scale));
+//         }else{
+//             pointInfo = choosePoint(pointInfo.w,sdBox(origin, shape.position, shape.scale), pointInfo.xyz, shape.color);
+//             progression = min(progression, sdSphere(origin, shape.position, shape.scale.x));
+//         }
+//     }
+
+//     return progression;
+// }
+
+float4 constructShape(float3 origin){
+    float4 pointInfo;
+    pointInfo.w = maxDistance;
+
+    int recursionstack[100];
+    float4 buffer[100];
+    int stackLength = 0;
+    int bufferIndex = 0;
+
+    int i = 0;
+
+    while(i < numShapes){
+        shapeInfo shape = shapes[i];
+        if(shape.numChildren != 0){
+            stackLength = 0;
+            bufferIndex = 0;
+            float4 newShape;
+            while(i<shape.nextSiblingIndex){
+                i++;
+                shapeInfo childShape = shapes[i];
+                if(childShape.numChildren == 0){
+                    float4 tempInfo;
+                    tempInfo.w = maxDistance;
+                    shapeInfo parentShape = shapes[i-1];
+                    recursionstack[stackLength] = i-1;
+                    stackLength++;
+                    for (int j = 0; j<parentShape.numChildren;j++){
+                        shapeInfo tempShape = shapes[i];
+                        if(tempShape.shapeType == 0){
+                            tempInfo = choosePoint(tempInfo.w,sdBox(origin, tempShape.position, tempShape.scale), tempInfo.xyz, tempShape.color, tempShape.behaviour);
+                        }else{
+                            tempInfo = choosePoint(tempInfo.w,sdSphere(origin, tempShape.position, tempShape.scale.x), tempInfo.xyz, tempShape.color, tempShape.behaviour);
+                        }i++;
+                    }
+                    buffer[bufferIndex] = tempInfo;
+                    bufferIndex++;
+                }
+            }
+            while(stackLength > 1){
+                int childrenResolved = 0;
+                for(int j = 0; j<stackLength; j++){
+                    float4 potentialShapeInfo = buffer[j];
+                    int shapeIndex = recursionstack[j];
+                    if(shapeIndex == -1){
+                        continue;
+                    }
+                    shapeInfo childShape = shapes[shapeIndex];
+                    shapeInfo paretnShape = shapes[shapeIndex - 1];
+
+                    if(shapes[shapeIndex - 1].numChildren == 0){
+                        recursionstack[j - childrenResolved] = shapeIndex;
+                        buffer[j - childrenResolved] = buffer[j];
+                        continue;
+                    }
+                    bool SiblingReady = false;
+                    int left = 0;
+                    int right = stackLength;
+                    int mid;
+                    int skipArray[100];
+                    for(int k = 0; k<paretnShape.numChildren - 1;k++){
+                        while (left <= right) {
+                            mid = (left + right) / uint(2);
+                            if (recursionstack[mid] == childShape.nextSiblingIndex) {
+                                SiblingReady = true;
+                                break;
+                            } else if (recursionstack[mid] < childShape.nextSiblingIndex) {
+                                left = mid + 1;
+                            } else {
+                                right = mid - 1;
+                            }
+                        }
+                        if(SiblingReady){
+                            float4 siblingShapeInfo = buffer[mid];
+                            skipArray[k] = mid;
+                            childShape = shapes[recursionstack[mid]];
+                            potentialShapeInfo = choosePoint(potentialShapeInfo.w, siblingShapeInfo.w, potentialShapeInfo.xyz, siblingShapeInfo.xyz, childShape.behaviour);
+                        }else{
+                            SiblingReady = false;
+                            break;
+                        }
+                    }
+                    if(SiblingReady){
+                        childrenResolved += paretnShape.numChildren - 1;
+                        buffer[j - childrenResolved] = potentialShapeInfo;
+                        recursionstack[j - childrenResolved] = shapeIndex - 1;
+                        for(int k = 0; k < paretnShape.numChildren; k++){
+                            recursionstack[skipArray[k]] = -1;
+                        }
+                    }else{
+                        recursionstack[j - childrenResolved] = shapeIndex;
+                        buffer[j - childrenResolved] = buffer[j];
+                    }
+                }
+                stackLength = j - childrenResolved;
+            }
+            newShape = buffer[0];
+            pointInfo = choosePoint(pointInfo.w, newShape.w, pointInfo.xyz, newShape.xyz, shape.behaviour);
+        }else{
+            if(shape.shapeType == 0){
+                pointInfo = choosePoint(pointInfo.w,sdBox(origin, shape.position, shape.scale), pointInfo.xyz, shape.color, shape.behaviour);
+            }else{
+                pointInfo = choosePoint(pointInfo.w,sdSphere(origin, shape.position, shape.scale.x), pointInfo.xyz, shape.color, shape.behaviour);
+            }
+            i++;
+        }
+    }
+    return pointInfo;
+}
+
+
+float4 approachScene(float3 origin){
+    // float4 pointInfo;
+    // pointInfo.w = maxDistance;
+    // for(int i = 0; i<numShapes; i++){
+    //     shapeInfo shape = shapes[i];
+    //     if(shape.shapeType == 0){
+    //         pointInfo = choosePoint(pointInfo.w,sdBox(origin, shape.position, shape.scale), pointInfo.xyz, shape.color, shape.behaviour);
+    //     }else{
+    //         pointInfo = choosePoint(pointInfo.w,sdSphere(origin, shape.position, shape.scale.x), pointInfo.xyz, shape.color, shape.behaviour);
+    //     }
+    // }
+
+    // return pointInfo;
+    return constructShape(origin);
+}
+
+float getLighting(float3 surfacePoint, float normalReaction, float initialDistance = 0){
+    float3 direction = normalize(lightPos - surfacePoint);
+    float distanceToLight = length(lightPos - surfacePoint);
+    float dist = 0;
+    while (dist < distanceToLight){
+        float progression = approachScene(surfacePoint + direction * dist).w;
+        dist += progression;
+
+        if (progression <= surfaceDisReq){
+            return minBrightness;
+        }
+    }
+    distanceToLight += initialDistance;
+    return clamp(brightness * (1.0/(distanceToLight * distanceToLight)) * normalReaction, minBrightness, Maxbrightness) ;
+}
+
+float3 getNormal(float3 surfacePoint){
+    // float xDistance = approachScene(surfacePoint + float3(surfaceDisReq,0,0));
+    // float yDistance = approachScene(surfacePoint + float3(0,surfaceDisReq,0));
+    // float zDistance = approachScene(surfacePoint + float3(0,0,surfaceDisReq));
+    // return normalize(float3(xDistance,yDistance,zDistance) - surfaceDisReq);
+    float x = approachScene(float3(surfacePoint.x+surfaceDisReq,surfacePoint.y,surfacePoint.z)).w - approachScene(float3(surfacePoint.x-surfaceDisReq,surfacePoint.y,surfacePoint.z)).w;
+    float y = approachScene(float3(surfacePoint.x,surfacePoint.y+surfaceDisReq,surfacePoint.z)).w - approachScene(float3(surfacePoint.x,surfacePoint.y-surfaceDisReq,surfacePoint.z)).w;
+    float z = approachScene(float3(surfacePoint.x,surfacePoint.y,surfacePoint.z+surfaceDisReq)).w - approachScene(float3(surfacePoint.x,surfacePoint.y,surfacePoint.z-surfaceDisReq)).w;
+    return normalize(float3(x,y,z));
+}
+
+float3 getSpecular(float3 surfacePoint, float3 surfaceNormal, float3 viewDirection, float3 surfaceColour){
+    float3 direction = reflect(viewDirection, surfaceNormal);
+    float dist = 0;
+    while (dist < maxDistance){
+        float4 pointInfo = approachScene(surfacePoint + direction * dist);
+        dist += pointInfo.w;
+
+        if (pointInfo.w <= surfaceDisReq){
+            float3 colour = pointInfo.xyz;
+            float normalFactor = saturate(saturate(dot(surfaceNormal,normalize(lightPos - surfacePoint))));
+            float lightFactor = getLighting(surfacePoint , normalFactor);
+            float3 specularSurfacePoint = surfacePoint + direction * dist;
+            float3 specularSurfaceNormal = getNormal(specularSurfacePoint - direction * surfaceDisReq);
+            float specularNormalFactor = saturate(saturate(dot(specularSurfaceNormal,normalize(lightPos - specularSurfacePoint))));
+            float specularLightFactor = getLighting(specularSurfacePoint - direction * surfaceDisReq * 2, specularNormalFactor, dist);
+            float3 totalColour = float3(lerp(colour.r * normalFactor * lightFactor, colour.r * specularNormalFactor * specularLightFactor, 1),lerp(colour.g * normalFactor * lightFactor, colour.g * specularNormalFactor * specularLightFactor, 1),lerp(colour.b * normalFactor * lightFactor, colour.b * specularNormalFactor * specularLightFactor, 1));
+            // float3 totalColour = colour * specularNormalFactor * specularLightFactor;
+            return  totalColour;
+        }
+    }
+    float normalFactor = saturate(saturate(dot(surfaceNormal,normalize(lightPos - surfacePoint))));
+    float lightFactor = getLighting(surfacePoint , normalFactor);
+    float glintFactor = pow(dot(normalize((lightPos - surfacePoint)), direction), 5) * 0.4;
+    return surfaceColour * glintFactor * lightFactor;
+    // float3 lightDirection = normalize(lightPos - surfacePoint);
+    // return float3(0,1,1) * pow(saturate(dot(direction, lightDirection)), 2) ;
+}
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float2 uv;
+    // uv.x = id.x/float(cameraWidth) * 2 - 1;
+    // uv.y = id.y/float(cameraHeight) * 2 - 1;
+
+    uv.xy = id.xy / float2(cameraWidth,cameraHeight) * 2 - 1;
+
+    Destination[uint2(id.xy)] = Source[uint2(id.xy)];
+    // Destination[uint2(id.xy)] = float4(0,0,0,1);
+
+
+    float3 origin = camPos;
+    float3 direction = mul(_CameraInverseProjection, float4(uv,0,1)).xyz;
+    direction = mul(_CameraToWorld, float4(direction,0)).xyz;
+    direction = normalize(direction);
+
+    float dist = 0;
+    int steps = 0;
+    while (dist < maxDistance){
+        steps ++;
+        float4 pointInfo = approachScene(origin + direction * dist);
+
+        // if (steps > 300){
+        //     Destination[uint2(id.x,id.y)] = float4(1,1,1,1);
+        //     break;
+        // }
+
+        if (pointInfo.w <= surfaceDisReq){
+            float3 colour = pointInfo.xyz;
+            float3 surfacePoint = origin + direction * dist;
+            float3 surfaceNormal = getNormal(surfacePoint - direction * surfaceDisReq);
+            float normalFactor = saturate(saturate(dot(surfaceNormal,normalize(lightPos - surfacePoint))));
+            float lightFactor = getLighting(surfacePoint - direction * surfaceDisReq * 2, normalFactor);
+            // float3 specularFactor = getSpecular(surfacePoint - direction * surfaceDisReq * 2,surfaceNormal,direction, colour);
+            Destination[uint2(id.x,id.y)] = float4(colour * normalFactor * lightCol,1);
+            break;
+        }
+        dist += pointInfo.w;
+
+    }
+}
