@@ -15,9 +15,7 @@ public class Shape : MonoBehaviour{
     }
 
     public ShapeType shapeType;
-    public Color color;
-    public float LightSourceStrength;
-    public float roughness;
+    public CustomMaterial material;
     public Vector3 position{get => transform.position;}
     public Vector3 scale{get => transform.localScale;}
 

@@ -3,10 +3,8 @@
 struct shapeInfo{
     float3 position;
     float3 scale;
-    float3 color;
-    float roughness;
-    float emission;
     int shapeType;
+    int material;
 };
 
 struct Ray{
@@ -21,20 +19,27 @@ struct Ray{
     // }
 };
 
+struct RayTracingMaterial
+{
+    float3 colour;
+    float emissionStrength;
+    float roughness;
+    int dielectric;
+};
+
 struct Hit{
     float3 pos;
     float3 normal;
-    float3 col;
     float dist;
-    float roughness;
-    float emission;
     bool hit;
+    RayTracingMaterial material;
 };
 
 Texture2D<float4> Source;
 Texture2D<float4> skyboxTexture;
 RWTexture2D<float4> Destination;
 StructuredBuffer<shapeInfo> shapes;
+StructuredBuffer<RayTracingMaterial> materials;
 
 float4x4 _CameraInverseProjection, _CameraToWorld;
 float3 camPos, lightPos;
@@ -224,13 +229,15 @@ Hit raySphere(Ray ray, shapeInfo circle){
         return hit;
     }
     // hit.pos = (ray.origin + ray.direction * d);
-    hit.pos = rayOrigin + normalize(rayDirection) * d + circle.position;
-    hit.col = circle.color;
     hit.dist = d;
+    hit.pos = rayOrigin + normalize(rayDirection) * hit.dist + circle.position;
+    RayTracingMaterial material = materials[circle.material];
+    hit.material = material;
+    // hit.col = circle.color;
+    // hit.roughness = circle.emission;
+    // hit.emission = circle.roughness;
     hit.hit = true;
     hit.normal = normalize(hit.pos - circle.position);
-    hit.roughness = circle.emission;
-    hit.emission = circle.roughness;
     // hit.col = hit.normal;
     return hit;
 }
@@ -266,14 +273,16 @@ Hit rayBox(Ray ray, shapeInfo box){
 
 	hit.dist = t1;
     // hit.pos = rayOrigin + normalize(rayDirection) * t1 + box.position;
-    hit.pos = (ray.origin + ray.direction * t1);
-    hit.col = box.color;
+    hit.pos = (ray.origin + ray.direction * hit.dist);
+    RayTracingMaterial material = materials[box.material];
+    hit.material = material;
+    // hit.col = box.color;
+    // hit.roughness = box.emission;
+    // hit.emission = box.roughness;
     hit.hit = true;
     float3 pc = hit.pos - box.position;
     float3 normal = sign(pc) * ((abs(2 * abs(pc) - box.scale)) < 0.00001f);
     hit.normal = normal;
-    hit.roughness = box.emission;
-    hit.emission = box.roughness;
     // hit.col = pc;
     return hit;
     // normal.x = sign(pc.x) * step(abs(2 * abs(pc.x) - box.scale.x), EPSILON);
@@ -411,7 +420,7 @@ float3 getHDREnvironment(Ray ray){
 
 
     // # Return the pixel coordinates (u, v)
-    return skyboxStrength * pow(skyboxTexture[uv].rgb,skyboxGamma);
+    return skyboxStrength * pow(abs(skyboxTexture[uv].rgb),skyboxGamma);
 }
 
 float3 trace(Ray ray, inout uint rngstate){
@@ -424,21 +433,37 @@ float3 trace(Ray ray, inout uint rngstate){
     for(int bounceCount = 0; bounceCount < maxRecursionDepth; bounceCount++){
         Hit nearestHit = rayCast(light);
         if (nearestHit.hit){
+
+            RayTracingMaterial material = nearestHit.material ;
             float3 newDir;
             float3 diffuse = normalize(nearestHit.normal + getRandomDir(nearestHit.normal,rngstate));
             float3 specular = reflect(light.direction,nearestHit.normal);
-            newDir = lerp(diffuse,specular,nearestHit.roughness);
+            float3 candidate = lerp(specular,diffuse,material.roughness);
+            newDir = candidate;
+
+            float chance = Randnum(rngstate);
+
+            // specular chance determined by 'specular', later by fresnel
+            // diffuse chance determinde by 'specular' and 'metallic', later dielectric
+            // assume randomly polarised light
+
             float3 newPos = nearestHit.pos;
-            float3 emittedLight = nearestHit.col * nearestHit.emission;
-            // float attenuation = (light.dist)/50;
-            illumination += emittedLight * light.color * light.strength ;
 
 
-            float lambert =  dot(nearestHit.normal,newDir);
             light.dist += nearestHit.dist;
-            light.color *= nearestHit.col;
-            light.strength = light.strength * lambert;
 
+            float3 emittedLight = material.colour * material.emissionStrength;
+            float attenuation = 1.0f/(light.dist * light.dist);
+            illumination += emittedLight * light.color * light.strength  * attenuation;
+
+            float lambert = saturate(dot(nearestHit.normal,newDir));
+            float absorbtion = 1.0f;
+            float diffuseFraction = 1.0f;
+            // absorbtion by fresnel, if specular, multiply with ratio
+            light.strength *= absorbtion * lambert * diffuseFraction;
+            // light.strength = light.strength * 0.5f;
+
+            light.color *= material.colour;
             light.direction = newDir;
             light.origin = newPos;
         }else{
@@ -456,7 +481,7 @@ float3 trace(Ray ray, inout uint rngstate){
 float4 sample(Ray ray){
     Hit nearestHit = rayCast(ray);
     if (nearestHit.hit){
-        float3 albedo = nearestHit.col;
+        float3 albedo = nearestHit.material.colour;
         float lambert =  saturate(dot(nearestHit.normal,normalize(lightPos - nearestHit.pos)));
         float shadow = getSolar(nearestHit);
         return saturate(float4(lightCol * albedo * shadow * lambert,1));
@@ -474,7 +499,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float2 uv;
     // uv.x = id.x/float(cameraWidth) * 2 - 1;
     // uv.y = id.y/float(cameraHeight) * 2 - 1;
-    uv.xy = id.xy / float2(cameraWidth,cameraHeight) * 2 - 1;
+    uv.xy = (id.xy + float2(0.5f,0.5f)) / float2(cameraWidth,cameraHeight) * 2 - 1;
     Destination[uint2(id.xy)] = Source[uint2(id.xy)];
 
     uint pixelIndex = id.y * cameraWidth + id.x;

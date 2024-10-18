@@ -14,8 +14,8 @@ public class CameraMove : MonoBehaviour
     private float distanceToObject;
     private float zoom;
     private Vector2 mouse;
-    public float degreesX = 0;
-    public float degreesY = 0;
+    public float degreesX;
+    public float degreesY;
     private Vector3 playerOffset;
     [SerializeField]
     private float cameraLag;
@@ -33,6 +33,12 @@ public class CameraMove : MonoBehaviour
     // Update is called once per frame
 
     void Update(){
+        // if ( Camera.current.name == "SceneCamera" )
+        // {
+        //     playerInputs = new PlayerInputs();
+        //     playerInputs.CameraMovement.Enable();
+        //     playerOffset = new Vector3(player.transform.position.x,player.transform.position.y,player.transform.position.z - preferredDistanceToObject);
+        // }
         zoomCamera();
         getInputs();
         moveAroundPlayer();

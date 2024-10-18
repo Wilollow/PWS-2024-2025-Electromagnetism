@@ -1,4 +1,4 @@
-@REM @echo off
+@echo off
 
 if not defined CURRDIR (set CURRDIR=%~dp0%)
 
@@ -39,14 +39,14 @@ echo venv %PYTHON%
 echo script %RUNSCRIPT%
 call %VENVACTIVATE%
 pip install -r %CURRDIR%requirements.txt
-goto :run-program
+@REM goto :run-program
 
-:run-program
-call cd source\visualise
-call manimgl electricField/emfield.py InteractiveDevelopment
-@REM call manimgl -wo render_scene.py RenderScene
-if %ERRORLEVEL% == 0 goto :end_program_succesful
-goto :show_stdout_stderr
+@REM :run-program
+@REM call cd source\visualise
+@REM call manimgl electricField/emfield.py InteractiveDevelopment
+@REM @REM call manimgl -wo render_scene.py RenderScene
+@REM if %ERRORLEVEL% == 0 goto :end_program_succesful
+@REM goto :show_stdout_stderr
 
 :end_program_succesful
 echo program exited succesfully with error code 0, exiting...

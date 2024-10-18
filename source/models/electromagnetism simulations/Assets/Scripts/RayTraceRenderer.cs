@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -11,14 +12,17 @@ public class RayTraceRenderer : MonoBehaviour
     public Texture HDRI;
     public bool activateInScene;
     private ComputeShader RayTracer;
-    private Material frameManager;
     private ComputeBuffer shapesBuffer;
-    private Camera cam;
-    private RenderTexture rayTraceRender;
+    private ComputeBuffer materialsBuffer;
+    private CustomMaterial[] orderedMaterials;
     private Shape[] orderedShapes;
-    private int threadGroupsX,threadGroupsY;
+    private Material frameManager;
+    private Material aaManager;
+    private RenderTexture rayTraceRender;
+    private Camera cam;
     [SerializeField]
     private double renderedFramesCount;
+    private int threadGroupsX,threadGroupsY;
 
     // Start is called before the first frame update
     void Start()
@@ -61,6 +65,8 @@ public class RayTraceRenderer : MonoBehaviour
 		}
         Shader shader = Shader.Find("Unlit/FrameManager");
         frameManager = new Material(shader);
+        Shader shader2 = Shader.Find("Unlit/AA");
+        aaManager = new Material(shader2);
 
         // Create copy of prev frame
         RenderTexture weightedAccumulation = RenderTexture.GetTemporary(src.width, src.height);
@@ -70,6 +76,13 @@ public class RayTraceRenderer : MonoBehaviour
         RenderTexture currentFrame = RenderTexture.GetTemporary(src.width, src.height);
         currentFrame.enableRandomWrite = true;
         Render(src,currentFrame);
+
+        // run anti-aliasing
+        // RenderTexture aaFrame = RenderTexture.GetTemporary(src.width, src.height);
+        // aaFrame.enableRandomWrite = true;
+        // aaManager.SetInt("_Width", src.width);
+        // aaManager.SetInt("_Height", src.height);
+        // Graphics.Blit(currentFrame, aaFrame, aaManager);
 
         // Accumulate
         frameManager.SetFloat("_Frame", (float)renderedFramesCount);
@@ -82,9 +95,12 @@ public class RayTraceRenderer : MonoBehaviour
         // Release temps
         RenderTexture.ReleaseTemporary(currentFrame);
         RenderTexture.ReleaseTemporary(weightedAccumulation);
-        RenderTexture.ReleaseTemporary(currentFrame);      
+        RenderTexture.ReleaseTemporary(currentFrame);    
+        // RenderTexture.ReleaseTemporary(aaFrame);  
         shapesBuffer.Release();
         shapesBuffer = null;
+        materialsBuffer.Release();
+        materialsBuffer = null;
 
         renderedFramesCount += Application.isPlaying ? 1 : 0;
         
@@ -104,7 +120,7 @@ public class RayTraceRenderer : MonoBehaviour
         RayTracer.SetFloat("Maxbrightness", passSettings.Maxbrightness);
         RayTracer.SetFloat("minBrightness", passSettings.minBrightness);
         RayTracer.SetFloat("lightRadius", passSettings.lightSize);
-        RayTracer.SetFloat("globalTime", Mathf.Abs(Time.time + Random.Range(-1f,1f)));
+        RayTracer.SetFloat("globalTime", Mathf.Abs(Time.time + UnityEngine.Random.Range(-1f,1f)));
         RayTracer.SetFloat("skyboxStrength", passSettings.skyboxStrength);
         RayTracer.SetFloat("skyboxGamma", passSettings.skyboxGamma);
         RayTracer.SetFloat("HDRIWidth", HDRI.width);
@@ -119,6 +135,7 @@ public class RayTraceRenderer : MonoBehaviour
         RayTracer.SetTexture(0,"skyboxTexture",HDRI);
         // RayTracer.SetTexture(0,"depthBuffer",depthBuffer);
         RayTracer.SetBuffer(0, "shapes", shapesBuffer);
+        RayTracer.SetBuffer(0, "materials", materialsBuffer);
         RayTracer.SetInt("numShapes",orderedShapes.Length);
 
         // Debug.Log(orderedShapes);
@@ -128,11 +145,25 @@ public class RayTraceRenderer : MonoBehaviour
     }
 
     private void SceneSetup(){
-        List<Shape> shapes = new List<Shape>(MonoBehaviour.FindObjectsByType<Shape>(FindObjectsSortMode.None));
         if (shapesBuffer != null) {            
             shapesBuffer.Release();
             shapesBuffer = null;
         }
+        if (materialsBuffer != null) {
+            materialsBuffer.Release();
+            materialsBuffer = null;
+        }
+
+        CustomMaterial defaultMaterial = ScriptableObject.CreateInstance<CustomMaterial>();
+        (defaultMaterial.colour.r, defaultMaterial.colour.g, defaultMaterial.colour.b) = (255 / 255, 192 / 255, 203 / 255);
+        defaultMaterial.dielectric = false;
+        defaultMaterial.emissionStrength = 0.0f;
+        defaultMaterial.roughness = 0.5f;
+
+
+        List<Shape> shapes = new List<Shape>(MonoBehaviour.FindObjectsByType<Shape>(FindObjectsSortMode.None));
+        List<CustomMaterial> materials = new List<CustomMaterial>();
+
         shapesBuffer = new ComputeBuffer(shapes.Count,shapeInfo.getSize());
         orderedShapes = shapes.ToArray();
         // orderedShapes = orderedShapes.OrderBy(x => x.transform.position.y).ToArray();
@@ -141,15 +172,44 @@ public class RayTraceRenderer : MonoBehaviour
         for (int i = 0; i < orderedShapes.Length; i++)
         {
             Shape shape = orderedShapes[i];
-            shapeInfo newShapeInfo = new shapeInfo();
-            newShapeInfo.position = shape.transform.position;
-            newShapeInfo.scale = shape.transform.localScale;
-            newShapeInfo.color = new Vector3(shape.color.r,shape.color.g,shape.color.b);
-            newShapeInfo.shapeType = (int)shape.shapeType;
-            newShapeInfo.roughness = shape.roughness;
-            newShapeInfo.emission = shape.LightSourceStrength;
+            shapeInfo newShapeInfo = new shapeInfo
+            {
+                position = shape.transform.position,
+                scale = shape.transform.localScale,
+                shapeType = (int)shape.shapeType
+            };
+            CustomMaterial material = shape.material ?? defaultMaterial;
+            int index = Array.IndexOf<CustomMaterial>(materials.ToArray(),material);
+            if (index == -1)
+            {
+                materials.Add(material);
+                index = materials.Count - 1;
+            }
+            newShapeInfo.material = index;
+            // newShapeInfo.color = new Vector3(shape.color.r,shape.color.g,shape.color.b);
+            // newShapeInfo.roughness = shape.roughness;
+            // newShapeInfo.emission = shape.LightSourceStrength;
             shapesinfo[i] = newShapeInfo;
         }
+
+        materialsBuffer = new ComputeBuffer(materials.Count, RayTracingMaterial.getSize());
+        orderedMaterials = materials.ToArray();
+
+
+        RayTracingMaterial[] materialsinfo = new RayTracingMaterial[orderedMaterials.Length];
+        for (int i = 0; i < orderedMaterials.Length; i++)
+        {
+            CustomMaterial material = orderedMaterials[i];
+            // Debug.Log(orderedMaterials[i + 2]);
+            RayTracingMaterial newMaterial = new RayTracingMaterial();
+            newMaterial.colour = new Vector3(material.colour.r, material.colour.g, material.colour.b);
+            newMaterial.emissionStrength = material.emissionStrength;
+            newMaterial.roughness = material.roughness;
+            newMaterial.dielectric = Convert.ToInt32(material.dielectric);
+            materialsinfo[i] = newMaterial;
+        }
+
+        materialsBuffer.SetData(materialsinfo);
         shapesBuffer.SetData(shapesinfo);
     }
 
@@ -169,15 +229,25 @@ public class RayTraceRenderer : MonoBehaviour
     struct shapeInfo{
         public Vector3 position;
         public Vector3 scale;
-        public Vector3 color;
-        public float emission;
-        public float roughness;
         public int shapeType;
+        public int material;
 
         public static int getSize(){
-            return sizeof (float) * 11 + sizeof (int) * 1;
+            return sizeof (float) * 6 + sizeof (int) * 2;
         }
     }
+
+    struct RayTracingMaterial
+    {
+        public Vector3 colour;
+        public float emissionStrength;
+        public float roughness;
+        public int dielectric;
+
+        public static int getSize(){
+            return sizeof (float) * 5 + sizeof (int) * 1;
+        }
+    };
 
 
     public void resetFrameCount(){
@@ -193,6 +263,10 @@ public class RayTraceRenderer : MonoBehaviour
         if (rayTraceRender != null){
             rayTraceRender.Release();
             rayTraceRender = null;
+        }
+        if (materialsBuffer != null) {
+            materialsBuffer.Release();
+            materialsBuffer = null;
         }
     }
 }
