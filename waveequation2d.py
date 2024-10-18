@@ -24,15 +24,21 @@ def init_includes():
     
     ctx = moderngl.get_context()
 
-    ctx.includes['uniform_buffer'] = '''
+    ctx.includes['uniform_buffer_a'] = '''
+        layout (std430, binding = 0) buffer Points_a {
+            Point points[2560 * 1440];
+        } Data_in;
+    '''
+    
+    ctx.includes['uniform_buffer_b'] = '''
         struct Point {
             vec4 position;
             vec4 prev_position;
         };
 
-        layout (std430, binding = 0) buffer Points {
+        layout (std430, binding = 1) buffer Points_b {
             Point points[2560 * 1440];
-        } Data;
+        } Data_out;
     '''
     
 class Compute:
@@ -41,27 +47,28 @@ class Compute:
         self.program = self.ctx.compute_shader(
             '''
                 #version 430
-                #define GROUP_SIZE %COMPUTE_SIZE%
-                #include "uniform_buffer"
-                layout (local_size_x = 2, local_size_y = 2) in;
+                #include "uniform_buffer_b"
+                #include "uniform_buffer_a"
                 
+                layout (local_size_x = 2, local_size_y = 2) in;
                 uniform float C2;
                 uniform int width;
                 uniform int height;
 
                 void main() {                 
                     uint id = uint(min(gl_GlobalInvocationID.x + 1,width - 1) + int(min(gl_GlobalInvocationID.y + 1,height - 1)) * width);
-                    float pos = Data.points[id].position.z;
-                    float prevPos = Data.points[id].prev_position.z;
-                    float posLeft = Data.points[id - 1].position.z;
-                    float posRight = Data.points[id + 1].position.z;
-                    float posTop = Data.points[id - width].position.z;
-                    float posBottom = Data.points[id + width].position.z;
+                    float pos = Data_in.points[id].position.z;
+                    float prevPos = Data_in.points[id].prev_position.z;
+                    float posLeft = Data_in.points[id - 1].position.z;
+                    float posRight = Data_in.points[id + 1].position.z;
+                    float posTop = Data_in.points[id - width].position.z;
+                    float posBottom = Data_in.points[id + width].position.z;
                     
                     float u = 2*pos - prevPos + C2*(posRight + posLeft + posTop + posBottom - 4*pos);
                     
-                    Data.points[id].prev_position = Data.points[id].position;
-                    Data.points[id].position.z = u;
+                    Data_out.points[id].prev_position = Data_in.points[id].position;
+                    Data_out.points[id].position = Data_in.points[id].position;
+                    Data_out.points[id].position.z = u;
                     
                     // Data.points[gl_GlobalInvocationID.x + 1 + int(gl_GlobalInvocationID.y + 1) * width].prev_position = vec4(0,0,int(gl_GlobalInvocationID.x + 1)/width,0);
                 }
@@ -94,7 +101,7 @@ class Visualisation:
             fragment_shader='''
                 #version 430 core
                 
-                #include "uniform_buffer"
+                #include "uniform_buffer_b"
                 
                 uniform int width;
                 // uniform int height;
@@ -102,7 +109,7 @@ class Visualisation:
 
                 void main() {
                     uint id = uint( gl_FragCoord.x + width * int(gl_FragCoord.y));
-                    float pos = Data.points[id].position.z;
+                    float pos = Data_out.points[id].position.z;
                     // vec3 col = Data.points[id].position.xyz / vec3(width, height, 1);
                     
                     float null = 0;
@@ -139,6 +146,12 @@ class UniformBuffer:
         self.ubo.write(self.data)
         self.ubo.bind_to_storage_buffer(0)
         
+    def push(self):
+        self.ubo.write(self.data)
+        
+    def bind(self, binding_point):
+        self.ubo.bind_to_storage_buffer(binding_point)
+        
     def update(self, point_index, prev_position, position):
         self.set_point(point_index, prev_position, position)
         offset = point_index * 32
@@ -174,7 +187,8 @@ class Scene:
         print(f"count: {self.count}")
         print(f"courant: {self.courant}")
 
-        self.uniform_buffer = UniformBuffer((self.screen_width, self.screen_height), self.STRUCT_SIZE)
+        self.uniform_buffer_a = UniformBuffer((self.screen_width, self.screen_height), self.STRUCT_SIZE)
+        self.uniform_buffer_b = UniformBuffer((self.screen_width, self.screen_height), self.STRUCT_SIZE)
         self.computation = Compute(batch_size=self.STRUCT_SIZE)
 
         self.visualisation = Visualisation()
@@ -202,7 +216,7 @@ class Scene:
                 
                 position = (x[ix], y[iy],u)
                 
-                self.uniform_buffer.set_point(ix + iy * self.screen_width, (x[ix], y[iy],z[ix, iy]), position)
+                self.uniform_buffer_a.set_point(ix + iy * self.screen_width, (x[ix], y[iy],z[ix, iy]), position)
                 
                 # z[ix, iy] = u
             
@@ -210,29 +224,36 @@ class Scene:
         
         for i in range(self.screen_width):
             z[i, 0] = 0
-            self.uniform_buffer.set_point(i, (x[i], y[0],z[i, 0]), (x[i], y[0],0))
+            self.uniform_buffer_a.set_point(i, (x[i], y[0],z[i, 0]), (x[i], y[0],0))
             z[i, self.screen_height - 1] = 0
-            self.uniform_buffer.set_point(i + (self.screen_height - 1) * self.screen_width, (x[i], y[self.screen_height - 1],z[i, self.screen_height - 1]), (x[i], y[self.screen_height - 1],0))
+            self.uniform_buffer_a.set_point(i + (self.screen_height - 1) * self.screen_width, (x[i], y[self.screen_height - 1],z[i, self.screen_height - 1]), (x[i], y[self.screen_height - 1],0))
         
         for i in range(self.screen_height):
             z[0, i] = 0
-            self.uniform_buffer.set_point(i * self.screen_width, (x[0], y[i],z[0, i]), (x[0], y[i],0))
+            self.uniform_buffer_a.set_point(i * self.screen_width, (x[0], y[i],z[0, i]), (x[0], y[i],0))
             z[self.screen_width - 1, i] = 0
-            self.uniform_buffer.set_point(i * self.screen_width + (self.screen_width - 1), (x[self.screen_width - 1], y[i],z[self.screen_width - 1, i]), (x[self.screen_width - 1], y[i],0))
+            self.uniform_buffer_a.set_point(i * self.screen_width + (self.screen_width - 1), (x[self.screen_width - 1], y[i],z[self.screen_width - 1, i]), (x[self.screen_width - 1], y[i],0))
             
-        self.uniform_buffer.use()
+        self.uniform_buffer_a.push()
+        self.uniform_buffer_b.push()
             
         toc = time.perf_counter()
         print(f"Elapsed time: {toc - tic:0.4f} seconds")
         
 
     def render(self,t,zoom):
+        self.uniform_buffer_a.bind(0)
+        self.uniform_buffer_b.bind(1)
+
+        # Swap the buffers and vertex arrays around for next frame
         # enabling will absolutely fry performance, hard cpu bottleneck
         # self.uniform_buffer.use()
         
         # compute internal points
         self.computation.run((self.screen_width, self.screen_height), self.courant)
         self.visualisation.render((self.screen_width, self.screen_height))
+        
+        self.uniform_buffer_a, self.uniform_buffer_b = self.uniform_buffer_b, self.uniform_buffer_a
 
 init_includes()
 
